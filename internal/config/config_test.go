@@ -22,7 +22,7 @@ func TestLoadStrictDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !c.PowerChute.TLSVerify || c.Exporter.ListenAddress != "127.0.0.1" || c.DataLog.PageSize != 10 || c.Energy.PeriodMode != "existing" || c.PowerChute.TLSCAFile != filepath.Join(filepath.Dir(p), "ca.pem") {
+	if !c.PowerChute.TLSVerify || c.Exporter.ListenAddress != "127.0.0.1" || c.DataLog.PageSize != 100 || c.Energy.PeriodMode != "existing" || c.PowerChute.TLSCAFile != filepath.Join(filepath.Dir(p), "ca.pem") {
 		t.Fatalf("unexpected defaults: %+v", c)
 	}
 	for _, bad := range []string{"powerchute:\n  unknown_option: never-accept-this\n", "powerchute:\n  timezone: UTC\nenergy:\n  currency: RUB\n---\n{}", "powerchute:\n  timezone: Invalid/Zone\nenergy:\n  currency: RUB\n"} {

@@ -51,7 +51,8 @@ datalog:
   enabled: true
   poll_interval_seconds: 60
   cache_ttl_seconds: 180
-  page_size: 10
+  # Confirmed in the UI/API: fewer requests keep a full scan within its deadline.
+  page_size: 100
   max_pages: 1000
   rows_path: /aaData
   total_path: /iTotalDisplayRecords

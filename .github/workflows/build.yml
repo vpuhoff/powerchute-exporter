@@ -9,30 +9,36 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Every master push must finish its merge detection/build/release. Give it
+  # a unique group; PR/feature builds still cancel obsolete runs.
+  group: build-${{ github.workflow }}-${{ github.ref == 'refs/heads/master' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 jobs:
   metadata:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       numeric_version: ${{ steps.version.outputs.numeric_version }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      publish_release: ${{ steps.version.outputs.publish_release }}
+      commit_sha: ${{ steps.version.outputs.commit_sha }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Determine package version
         id: version
         shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            version="${BASH_REMATCH[1]}"
-            numeric_version="$version.0"
-          else
-            version="0.0.0-dev.${GITHUB_RUN_NUMBER}+${GITHUB_SHA:0:12}"
-            numeric_version=0.0.0.0
-          fi
-          printf 'version=%s\nnumeric_version=%s\n' "$version" "$numeric_version" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SERIES: '0.2'
+        run: python3 .github/scripts/release.py metadata
 
   test:
     strategy:
@@ -58,6 +64,7 @@ jobs:
           go test -race ./...
           for script in .github/scripts/*.sh packaging/linux/*.sh; do bash -n "$script"; done
           shellcheck .github/scripts/*.sh packaging/linux/*.sh
+          python3 -m unittest discover -s .github/scripts -p 'test_*.py'
 
   linux:
     needs: [metadata, test]
@@ -164,3 +171,32 @@ jobs:
             dist/*_setup.exe
             dist/*.zip
             dist/checksums-*.txt
+
+  release:
+    name: Publish GitHub Release
+    needs: [metadata, linux, windows]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.metadata.outputs.publish_release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.metadata.outputs.version }}
+      RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
+      COMMIT_SHA: ${{ needs.metadata.outputs.commit_sha }}
+      PUBLISH_RELEASE: ${{ needs.metadata.outputs.publish_release }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.metadata.outputs.commit_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: powerchute-exporter-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify complete builds and prepare release assets
+        run: python3 .github/scripts/release.py prepare release-assets
+      - name: Publish verified assets through a draft release
+        run: python3 .github/scripts/release.py publish release-assets

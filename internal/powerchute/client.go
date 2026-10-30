@@ -147,7 +147,34 @@ func classifyNetwork(err error) error {
 	if errors.As(err, &cv) || errors.As(err, &ua) || errors.As(err, &hn) || errors.As(err, &rh) {
 		return fail(TLS, "TLS verification or handshake failed")
 	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fail(Network, "request deadline exceeded")
+	}
+	if errors.Is(err, context.Canceled) {
+		return fail(Network, "request canceled")
+	}
+	var timed net.Error
+	if errors.As(err, &timed) && timed.Timeout() {
+		return fail(Network, "network timeout")
+	}
 	return fail(Network, "request failed or timed out")
+}
+
+func requestFailure(ctx context.Context, u *url.URL, err error) error {
+	// Path comes from the endpoint allowlist; strip Jetty session suffixes and
+	// never log the complete URL, query string or the underlying net/http error.
+	path, ok := endpointPath(u.Path)
+	if !ok || !allowedPath(path) {
+		path = "HTTP request"
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fail(Network, "collection cycle deadline exceeded while reading "+path)
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return fail(Network, "collection canceled while reading "+path)
+	}
+	e := classifyNetwork(err)
+	return fail(ErrorReason(e), path+": "+ErrorDetail(e))
 }
 
 func (c *Client) request(ctx context.Context, method string, u *url.URL, values url.Values, ajax bool) (response, error) {
@@ -175,7 +202,7 @@ func (c *Client) request(ctx context.Context, method string, u *url.URL, values 
 	}
 	r, err := c.http.Do(req)
 	if err != nil {
-		return response{}, classifyNetwork(err)
+		return response{}, requestFailure(ctx, u, err)
 	}
 	defer r.Body.Close()
 	if r.StatusCode == 401 || r.StatusCode == 403 {
@@ -186,7 +213,7 @@ func (c *Client) request(ctx context.Context, method string, u *url.URL, values 
 	}
 	b, err := io.ReadAll(io.LimitReader(r.Body, c.cfg.Exporter.MaxResponseBytes+1))
 	if err != nil {
-		return response{}, classifyNetwork(err)
+		return response{}, requestFailure(ctx, u, err)
 	}
 	if int64(len(b)) > c.cfg.Exporter.MaxResponseBytes {
 		return response{}, fail(HTTP, "response exceeds size limit")

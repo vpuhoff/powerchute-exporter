@@ -3,6 +3,7 @@ package exporter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -217,5 +218,75 @@ func TestBackoffIsBounded(t *testing.T) {
 		if d < base || d > base+base/5 {
 			t.Fatal("backoff out of range")
 		}
+	}
+}
+
+func TestQueuedSourceGetsItsOwnCycleTimeout(t *testing.T) {
+	energy, err := os.ReadFile("../powerchute/testdata/energy.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	datalog, err := os.ReadFile("../powerchute/testdata/datalog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/energyreporting" {
+			close(started)
+		}
+		timer := time.NewTimer(600 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-r.Context().Done():
+			return
+		case <-timer.C:
+		}
+		if r.URL.Path == "/energyreporting" {
+			_, _ = w.Write(energy)
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(datalog)
+		}
+	}))
+	defer srv.Close()
+	c := config.Defaults()
+	c.PowerChute.Timezone = "UTC"
+	c.PowerChute.BaseURL = srv.URL
+	c.Energy.Currency = "USD"
+	c.Exporter.CycleTimeoutSeconds = 1
+	client, err := powerchute.New(c, config.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	e := New(c, client, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	first := make(chan error, 1)
+	go func() { first <- e.PollOnce(context.Background(), "energy") }()
+	<-started
+	// The two requests take >1 second in total, but each source needs only
+	// 600 ms. Waiting for the first source must not consume the second's budget.
+	if err := e.PollOnce(context.Background(), "datalog"); err != nil {
+		t.Fatalf("queued source lost its cycle budget: %v", err)
+	}
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if !e.states["energy"].Success || !e.states["datalog"].Success {
+		t.Fatal("independent source successes were not published")
+	}
+}
+
+func TestCancelWhileQueuedDoesNotRecordNetworkFailure(t *testing.T) {
+	e, requests := setup(t)
+	e.collectGate <- struct{}{}
+	defer func() { <-e.collectGate }()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := e.PollOnce(ctx, "energy"); !errors.Is(err, context.Canceled) {
+		t.Fatal("queue wait did not honor cancellation")
+	}
+	if len(e.states["energy"].Errors) != 0 || requests.Load() != 0 {
+		t.Fatal("unstarted collection was published as a network failure")
 	}
 }
