@@ -1,0 +1,58 @@
+<form id="formpageform" action="/setenergyreporting" name="energyreportingform" method="post">
+
+      <div id="mainbox">
+
+        <div id="pcbereportingbox" class="label-value-group ui-corner-all">
+          <div class="label-value-pair">
+            <div id="startdatediv">
+              <label>From</label>
+              <div class="valueEntry">
+                <input
+                  type="text"
+                  value="07/02/2025"
+                  name="startdate"
+                  class="datepicker textinput ui-corner-all editable required EndDateBeforeStartDateChecker"
+                  id="startdate"
+                  readonly="readonly"
+                  maxlength="10"/>
+              </div>
+            </div>
+
+            <div id="enddatediv">
+              <label>To</label>
+              <div class="valueEntry">
+                <input
+                  type="text"
+                  value="10/30/2026"
+                  name="enddate"
+                  class="datepicker textinput ui-corner-all editable required"
+                  id="enddate"
+                  readonly="readonly"
+                  maxlength="10"/>
+              </div>
+            </div>
+
+            <div id="button-bar">
+              <input type="submit" value="Apply" class="button" id="apply" name="apply" disabled="disabled"/>
+            </div>
+          </div>
+
+          <div id="pcbeenergybox">
+            <span id="pcbeenergykwh" class="pcbeenergy">
+              <span class="pcbeenergytext pcbeenergytextheader">Energy</span>
+              <span class="pcbeenergytext pcbeenergytextvalue">3,482.20&nbsp;kWh</span>
+            </span>
+            <span id="pcbeenergycost" class="pcbeenergy">
+              <span class="pcbeenergytext pcbeenergytextheader">Cost</span>
+              <span class="pcbeenergytext pcbeenergytextvalue">pyб 34,961.26</span>
+            </span>
+            <span id="pcbeenergyco2" class="pcbeenergy">
+              <span class="pcbeenergytext pcbeenergytextheader">CO<sub>2</sub></span>
+              <span class="pcbeenergytext pcbeenergytextvalue">887.96&nbsp;kg</span>
+            </span>
+          </div>
+        </div>
+
+        </div> <input type="hidden" name="formtoken" id="formtoken" value="fixture-token"/>
+      <input type="hidden" name="formtokenid" id="formtokenid" value="fixture-token-id"/>
+    </form>

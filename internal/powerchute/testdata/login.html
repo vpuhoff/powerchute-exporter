@@ -1,0 +1,34 @@
+<form name="loginForm" id="loginForm" method="post" action="j_security_check">
+        <div class="label-value-group ui-widget-content ui-corner-all">
+          <div class="label-value-pair">
+            <label for="j_username">Username</label>
+            <input
+                type="text"
+                id="username"
+                name="j_username"
+                class="text-input editable ui-widget-content ui-corner-all"
+                value=""
+                maxlength="128"
+                autocomplete="off"/>
+          </div>
+		  <div class="hidden">
+			<input type="password"/>
+		  </div>
+          <div class="label-value-pair">
+            <label for="j_password">Password</label>
+            <input
+                type="password"
+                id="password"
+                name="j_password"
+                class="text-input editable ui-widget-content ui-corner-all"
+                value=""
+                maxlength="128"
+                autocomplete="off"/>
+          </div>
+          </div>
+        <div id="button-bar">
+          <input type="submit" id="loginButton" name="login" class="button" value="Log On" />
+        </div>
+        <input type="hidden" name="formtoken" id="formtoken" value="fixture-token"/>
+        <input type="hidden" name="formtokenid" id="formtokenid" value="fixture-token-id"/>
+      </form>

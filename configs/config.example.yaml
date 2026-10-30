@@ -1,0 +1,68 @@
+# All file paths are relative to this file. Keep real credentials out of examples.
+powerchute:
+  base_url: https://localhost:6547
+  # Optional inline credentials take precedence over secret files and env.
+  # username: '<username>'
+  # password: '<password>'
+  username_env: POWERCHUTE_USERNAME
+  password_env: POWERCHUTE_PASSWORD
+  # username_file: /run/secrets/powerchute_username
+  # password_file: /run/secrets/powerchute_password
+  timezone: Asia/Yerevan
+  tls_verify: true
+  # Set the CA/certificate for YOUR installation, or use the system trust store.
+  # tls_ca_file: ca.pem
+  auth_retry_seconds: 60
+
+exporter:
+  listen_address: 127.0.0.1
+  port: 9787
+  connect_timeout_seconds: 5
+  read_timeout_seconds: 10
+  cycle_timeout_seconds: 30
+  max_response_bytes: 2097152
+  max_redirects: 5
+
+energy:
+  enabled: true
+  poll_interval_seconds: 300
+  cache_ttl_seconds: 900
+  period_mode: existing
+  start_date: null
+  end_date: null
+  currency: RUB
+  decimal_separator: '.'
+  thousands_separator: ','
+  date_format: '%m/%d/%Y'
+  # Fixed periods can affect the UI/global setting. Enable only after verifying
+  # the POST date format and scope on your PowerChute version.
+  allow_period_update: false
+  post_date_format: ''
+  apply_value: Apply
+  selectors:
+    energy: '#pcbeenergykwh .pcbeenergytextvalue'
+    cost: '#pcbeenergycost .pcbeenergytextvalue'
+    co2: '#pcbeenergyco2 .pcbeenergytextvalue'
+    start_date: 'input[name=startdate]'
+    end_date: 'input[name=enddate]'
+    form: 'form[name=energyreportingform]'
+
+datalog:
+  enabled: true
+  poll_interval_seconds: 60
+  cache_ttl_seconds: 180
+  page_size: 10
+  max_pages: 1000
+  rows_path: /aaData
+  total_path: /iTotalDisplayRecords
+  # scan proves the latest timestamp by traversing the complete bounded log.
+  # newest_first requires an independently verified server ordering contract.
+  ordering: scan
+  initialize_page: false
+  date_format: '%m/%d/%y'
+  time_format: '%H:%M:%S'
+  two_digit_year_start: 2000 # the explicit 100-year window 2000..2099
+  decimal_separator: '.'
+  thousands_separator: ','
+  max_age_seconds: 2700
+  max_future_skew_seconds: 60

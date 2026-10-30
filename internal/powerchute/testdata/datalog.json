@@ -1,0 +1,43 @@
+{
+  "iTotalRecords": 3,
+  "aaData": [
+    {
+      "date": "10/30/26",
+      "upsload": "30.0",
+      "battcap": "100",
+      "infreq": "N/A",
+      "time": "23:37:46",
+      "outvolt": "N/A",
+      "battvolt": "27.1",
+      "outfreq": "N/A",
+      "linevolt": "239.0",
+      "upstemp": "N/A"
+    },
+    {
+      "date": "10/30/26",
+      "upsload": "26.0",
+      "battcap": "100",
+      "infreq": "N/A",
+      "time": "23:17:46",
+      "outvolt": "N/A",
+      "battvolt": "27.1",
+      "outfreq": "N/A",
+      "linevolt": "237.0",
+      "upstemp": "N/A"
+    },
+    {
+      "date": "10/30/26",
+      "upsload": "30.0",
+      "battcap": "100",
+      "infreq": "N/A",
+      "time": "22:57:46",
+      "outvolt": "N/A",
+      "battvolt": "27.1",
+      "outfreq": "N/A",
+      "linevolt": "239.0",
+      "upstemp": "N/A"
+    }
+  ],
+  "iTotalDisplayRecords": 3,
+  "sEcho": "1"
+}

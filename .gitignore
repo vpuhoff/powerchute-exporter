@@ -1,0 +1,25 @@
+# Build outputs and local caches.
+/.cache/
+/bin/
+/dist/
+*.test
+*.test.exe
+*.prof
+coverage*.out
+
+# Installation-specific configuration, credentials and certificates.
+/config.yaml
+/config.yml
+/config.local.yml
+/config.local.yaml
+/configs/*.local.yml
+/configs/*.local.yaml
+/configs/powerchute-local-ca.pem
+/.env
+/.env.*
+!/.env.example
+*.secret
+
+# OS-generated files.
+.DS_Store
+Thumbs.db
