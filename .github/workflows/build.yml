@@ -1,0 +1,166 @@
+name: Build and package
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      numeric_version: ${{ steps.version.outputs.numeric_version }}
+    steps:
+      - name: Determine package version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            version="${BASH_REMATCH[1]}"
+            numeric_version="$version.0"
+          else
+            version="0.0.0-dev.${GITHUB_RUN_NUMBER}+${GITHUB_SHA:0:12}"
+            numeric_version=0.0.0.0
+          fi
+          printf 'version=%s\nnumeric_version=%s\n' "$version" "$numeric_version" >> "$GITHUB_OUTPUT"
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+      - name: Check formatting and races
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          test -z "$(gofmt -l cmd internal)"
+          go test -race ./...
+          for script in .github/scripts/*.sh packaging/linux/*.sh; do bash -n "$script"; done
+          shellcheck .github/scripts/*.sh packaging/linux/*.sh
+
+  linux:
+    needs: [metadata, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.metadata.outputs.version }}
+      GOARCH: ${{ matrix.arch }}
+      CGO_ENABLED: '0'
+      PACKAGE_MAINTAINER: ${{ github.repository_owner }} <${{ github.repository_owner }}@users.noreply.github.com>
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build Linux binary
+        shell: bash
+        run: |
+          mkdir -p "dist/linux-$GOARCH"
+          go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+            -o "dist/linux-$GOARCH/powerchute-exporter" ./cmd/powerchute-exporter
+      - name: Install pinned nFPM
+        run: bash .github/scripts/install-nfpm.sh "$RUNNER_TEMP/nfpm"
+      - name: Build DEB, RPM and portable archive
+        shell: bash
+        run: |
+          nfpm package --config packaging/nfpm.yaml --packager deb --target "dist/powerchute-exporter_${VERSION}_linux_${GOARCH}.deb"
+          nfpm package --config packaging/nfpm.yaml --packager rpm --target "dist/powerchute-exporter_${VERSION}_linux_${GOARCH}.rpm"
+          tar -czf "dist/powerchute-exporter_${VERSION}_linux_${GOARCH}.tar.gz" \
+            -C "dist/linux-$GOARCH" powerchute-exporter -C "$GITHUB_WORKSPACE" configs/config.example.yaml README.md
+      - name: Test install, upgrade and removal in Debian and Rocky Linux
+        if: matrix.arch == 'amd64'
+        run: bash .github/scripts/test-linux-packages.sh
+      - name: Checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum *.deb *.rpm *.tar.gz > "checksums-linux-$GOARCH.txt"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: powerchute-exporter-linux-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
+            dist/checksums-*.txt
+
+  windows:
+    needs: [metadata, test]
+    runs-on: windows-2022
+    timeout-minutes: 25
+    env:
+      VERSION: ${{ needs.metadata.outputs.version }}
+      NUMERIC_VERSION: ${{ needs.metadata.outputs.numeric_version }}
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build Windows binary
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/windows-amd64 | Out-Null
+          go build -trimpath -ldflags "-s -w -X main.version=$env:VERSION" -o dist/windows-amd64/powerchute-exporter.exe ./cmd/powerchute-exporter
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install pinned Inno Setup compiler
+        id: inno
+        shell: pwsh
+        run: ./.github/scripts/install-inno.ps1 -ToolDirectory (Join-Path $env:RUNNER_TEMP 'inno')
+      - name: Build service installer
+        shell: pwsh
+        env:
+          ISCC: ${{ steps.inno.outputs.iscc }}
+        run: |
+          & $env:ISCC "/DAppVersion=$env:VERSION" "/DNumericVersion=$env:NUMERIC_VERSION" packaging/windows/installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test installer, SCM lifecycle, upgrade and uninstall
+        shell: pwsh
+        run: ./.github/scripts/test-windows-installer.ps1 -Installer (Get-ChildItem dist/*_setup.exe).FullName
+      - name: Portable archive and checksums
+        shell: pwsh
+        run: |
+          Copy-Item configs/config.example.yaml dist/windows-amd64/config.example.yaml
+          Copy-Item README.md dist/windows-amd64/README.md
+          Compress-Archive -Path dist/windows-amd64/* -DestinationPath "dist/powerchute-exporter_$($env:VERSION)_windows_amd64.zip"
+          Get-ChildItem dist -File | Where-Object { $_.Extension -in '.exe', '.zip' } | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          } | Set-Content dist/checksums-windows-amd64.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: powerchute-exporter-windows-amd64
+          if-no-files-found: error
+          path: |
+            dist/*_setup.exe
+            dist/*.zip
+            dist/checksums-*.txt

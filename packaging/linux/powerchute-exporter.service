@@ -1,0 +1,32 @@
+[Unit]
+Description=PowerChute Prometheus Exporter
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=powerchute-exporter
+Group=powerchute-exporter
+WorkingDirectory=/etc/powerchute-exporter
+EnvironmentFile=-/etc/powerchute-exporter/environment
+ExecStart=/usr/bin/powerchute-exporter -config /etc/powerchute-exporter/config.yaml
+Restart=on-failure
+RestartSec=30s
+TimeoutStopSec=35s
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

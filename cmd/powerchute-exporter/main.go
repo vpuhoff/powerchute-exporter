@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"powerchute-exporter/internal/config"
+	"powerchute-exporter/internal/daemon"
 	"powerchute-exporter/internal/exporter"
 	"powerchute-exporter/internal/powerchute"
 )
@@ -26,23 +28,51 @@ func run() int {
 	path := flag.String("config", "config.yaml", "YAML configuration file")
 	check := flag.Bool("check-config", false, "validate configuration without connecting or reading credentials")
 	showVersion := flag.Bool("version", false, "print version")
+	serviceAction := flag.String("service", "", "Windows service: install, uninstall, start, stop or status")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
 		return 0
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	c, err := config.Load(*path)
+	if *serviceAction != "" {
+		if err := daemon.Control(*serviceAction, *path); err != nil {
+			if errors.Is(err, daemon.ErrNotRunning) {
+				return 3
+			}
+			logger.Error("service command failed", "error", err.Error())
+			return 1
+		}
+		return 0
+	}
+	if *check {
+		if _, err := loadConfig(*path); err != nil {
+			logger.Error("configuration error", "error", err.Error())
+			return 1
+		}
+		fmt.Println("configuration valid")
+		return 0
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return daemon.Run(ctx, func(ctx context.Context, ready func(), logger *slog.Logger) int {
+		return serve(ctx, *path, ready, logger)
+	})
+}
+
+func loadConfig(path string) (config.Config, error) {
+	c, err := config.Load(path)
 	if err == nil {
 		err = powerchute.ValidateFormats(c)
 	}
+	return c, err
+}
+
+func serve(ctx context.Context, path string, ready func(), logger *slog.Logger) int {
+	c, err := loadConfig(path)
 	if err != nil {
 		logger.Error("configuration error", "error", err.Error())
 		return 1
-	}
-	if *check {
-		fmt.Println("configuration valid")
-		return 0
 	}
 	creds, err := c.PowerChute.Credentials()
 	if err != nil {
@@ -69,13 +99,14 @@ func run() int {
 		return 1
 	}
 	srv := &http.Server{Handler: e.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10, ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelWarn)}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := context.WithCancel(ctx)
 	defer stop()
 	done := make(chan struct{})
 	go func() { e.Run(ctx); close(done) }()
 	serveErrors := make(chan error, 1)
 	go func() { serveErrors <- srv.Serve(listener) }()
 	logger.Info("exporter started", "listen", address, "version", version)
+	ready()
 	exitCode := 0
 	select {
 	case <-ctx.Done():

@@ -7,6 +7,10 @@
 *.md text eol=lf
 *.html text eol=lf
 *.json text eol=lf
+*.sh text eol=lf
+*.service text eol=lf
+*.ps1 text eol=crlf
+*.iss text eol=crlf
 Dockerfile text eol=lf
 .gitignore text eol=lf
 .dockerignore text eol=lf

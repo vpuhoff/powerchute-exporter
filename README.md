@@ -24,6 +24,68 @@ Invoke-RestMethod http://127.0.0.1:9787/health
 
 `-check-config` проверяет YAML, ограничения и форматы, не подключается к PowerChute и не читает секреты. `-version` показывает версию сборки.
 
+## Установочные пакеты и службы
+
+### Windows x64
+
+Запустите `powerchute-exporter_<version>_windows_amd64_setup.exe` от администратора. Установщик размещает бинарник в `C:\Program Files\PowerChute Exporter`, создаёт нативную службу **PowerChuteExporter** с отложенным автоматическим запуском под **LocalService** и регистрирует источник событий Application → PowerChuteExporter. Обёртки вроде NSSM или WinSW не нужны.
+
+Конфиг находится в `C:\ProgramData\PowerChute Exporter\config.yaml`. После первой установки отредактируйте адрес, timezone, валюту, учётные данные и при необходимости `tls_ca_file`, затем запустите службу:
+
+```powershell
+Start-Service PowerChuteExporter
+Get-Service PowerChuteExporter
+Stop-Service PowerChuteExporter
+```
+
+Новая установка оставляет службу остановленной до настройки. Обновление останавливает работающую службу перед заменой бинарника и запускает её снова; уже остановленная служба остаётся остановленной. Конфиг сохраняется при обновлении и удалении приложения. Доступ к каталогу конфигурации получают SYSTEM, администраторы и LocalService. Приватный локальный конфиг из этого проекта и сертификат вашей установки **не включаются** в публичный установщик.
+
+Для ручной регистрации службы доступны команды из повышенного PowerShell:
+
+```powershell
+& 'C:\Program Files\PowerChute Exporter\powerchute-exporter.exe' -service install -config 'C:\ProgramData\PowerChute Exporter\config.yaml'
+& 'C:\Program Files\PowerChute Exporter\powerchute-exporter.exe' -service start
+& 'C:\Program Files\PowerChute Exporter\powerchute-exporter.exe' -service stop
+& 'C:\Program Files\PowerChute Exporter\powerchute-exporter.exe' -service uninstall
+```
+
+Команда `-service status` возвращает 0 для работающей службы, 3 для остановленной или отсутствующей и 1 при ошибке. Путь к конфигу хранится в регистрации службы; относительные пути внутри YAML по-прежнему считаются от самого YAML-файла. Журналы службы записываются в Windows Event Log, а при запуске из консоли — в stderr. Остановка через SCM отменяет сбор, завершает HTTP-сервер и освобождает сеанс PowerChute.
+
+### Linux: DEB и RPM, amd64 / arm64
+
+Пакеты предназначены для систем с systemd. Используйте пакет своей архитектуры:
+
+```bash
+sudo apt install ./powerchute-exporter_<version>_linux_amd64.deb
+# либо на RPM-дистрибутиве:
+sudo dnf install ./powerchute-exporter_<version>_linux_amd64.rpm
+
+sudoedit /etc/powerchute-exporter/config.yaml
+sudo systemctl start powerchute-exporter
+sudo systemctl status powerchute-exporter
+journalctl -u powerchute-exporter
+```
+
+Пакет создаёт системного пользователя `powerchute-exporter`, устанавливает бинарник в `/usr/bin/powerchute-exporter`, unit в `/usr/lib/systemd/system/powerchute-exporter.service` и включает автозапуск. Первая установка не запускает сервис до настройки. При обновлении перезапускается только уже работающий сервис; отключённый администратором автозапуск не включается повторно.
+
+Конфиги `/etc/powerchute-exporter/config.yaml` и `/etc/powerchute-exporter/environment` имеют права `0640 root:powerchute-exporter`, каталог — `0750`. Поля `username` / `password` можно задать непосредственно в YAML; альтернатива — переменные `POWERCHUTE_USERNAME` и `POWERCHUTE_PASSWORD` в файле `environment`. Служба работает без root, пишет журналы в journald, а системные каталоги для неё доступны только для чтения. CA-файл и файлы секретов должны быть доступны сервисному пользователю и находиться вне домашнего каталога: `ProtectHome=true` закрывает доступ к `/home` и `/root`.
+
+DEB использует conffiles, RPM — `%config(noreplace)`: изменённые конфиги не перезаписываются автоматически при обновлении. Удаление пакета останавливает службу и отключает автозапуск; изменённый конфиг сохраняется (RPM может переименовать его в `.rpmsave`). `apt purge` удаляет пакетные конфиги по стандартным правилам Debian. Системная учётная запись сохраняется, чтобы её UID/GID не достались другому пользователю при оставшихся локальных файлах.
+
+## GitHub Actions
+
+Workflow [`.github/workflows/build.yml`](.github/workflows/build.yml) запускается на push, pull request и вручную через **Actions → Build and package → Run workflow**. Он выполняет `go vet`, тесты Windows/Linux, Linux race-тесты и проверки shell-скриптов, затем собирает:
+
+- Windows amd64: установщик `.exe`, устанавливающий службу, и переносимый `.zip`;
+- Linux amd64 и arm64: `.deb`, `.rpm` и переносимый `.tar.gz`;
+- SHA256-файлы для проверки артефактов каждой платформы.
+
+Результаты доступны в **Artifacts** завершённого workflow. Push тега вида `v1.2.3` задаёт версию пакетов `1.2.3`; остальные сборки получают версию `0.0.0-dev.<run>+<commit>`. Workflow не требует секретов PowerChute, использует `contents: read` и не публикует GitHub Release автоматически. Для запуска репозиторий нужно разместить на GitHub: локальная папка сама по себе Actions не запускает.
+
+Упаковка закреплена на **nFPM 2.48.0** и **Inno Setup 6.7.4**; скачанные инструменты проверяются по SHA256. Windows job на одноразовом runner проверяет установку, запуск/остановку через SCM, обновление работающей службы с сохранением конфига и удаление. Linux job amd64 проверяет установку, запуск от сервисного пользователя, обновление и удаление в одноразовых Debian Bookworm и Rocky Linux 9 контейнерах; unit дополнительно проверяется `systemd-analyze verify`. В контейнерах systemd не запускается как PID 1, поэтому настоящий systemd lifecycle проверяется при развёртывании на целевой системе. Arm64 пакеты собираются кросс-компиляцией.
+
+Исходники упаковки: `packaging/windows/installer.iss`, `packaging/nfpm.yaml`, `packaging/linux/`. Для локальной сборки установщика сначала соберите бинарник в `dist/windows-amd64/powerchute-exporter.exe`, затем выполните `ISCC.exe /DAppVersion=1.2.3 /DNumericVersion=1.2.3.0 packaging/windows/installer.iss`. Для Linux соберите бинарник в `dist/linux-<GOARCH>/powerchute-exporter`, задайте `VERSION`, `GOARCH` и `PACKAGE_MAINTAINER` (формат `Имя <email>`), затем выполните `nfpm package --config packaging/nfpm.yaml --packager deb --target dist/` и аналогичную команду с `--packager rpm`. В CI maintainer формируется из публичного владельца GitHub-репозитория и его адреса `@users.noreply.github.com`; личные данные не фиксируются в файле упаковки.
+
 ## Конфигурация
 
 Полный пример — [`configs/config.example.yaml`](configs/config.example.yaml). YAML строгий: неизвестные поля и несколько YAML-документов отклоняются. Относительные пути считаются от каталога YAML-файла. Все интервалы — в секундах.
