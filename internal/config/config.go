@@ -104,7 +104,7 @@ func Defaults() Config {
 		Energy: Energy{Source: Source{true, 300, 900}, NumberFormat: NumberFormat{".", ","}, PeriodMode: "existing", DateFormat: "%m/%d/%Y", ApplyValue: "Apply", Selectors: EnergySelectors{
 			Energy: "#pcbeenergykwh .pcbeenergytextvalue", Cost: "#pcbeenergycost .pcbeenergytextvalue", CO2: "#pcbeenergyco2 .pcbeenergytextvalue", StartDate: "input[name=startdate]", EndDate: "input[name=enddate]", Form: "form[name=energyreportingform]",
 		}},
-		DataLog: DataLog{Source: Source{true, 60, 180}, NumberFormat: NumberFormat{".", ","}, PageSize: 10, MaxPages: 1000, RowsPath: "/aaData", TotalPath: "/iTotalDisplayRecords", Ordering: "scan", DateFormat: "%m/%d/%y", TimeFormat: "%H:%M:%S", TwoDigitYearStart: 2000, MaxAgeSeconds: 2700, MaxFutureSkewSeconds: 60},
+		DataLog: DataLog{Source: Source{true, 60, 180}, NumberFormat: NumberFormat{".", ","}, PageSize: 100, MaxPages: 1000, RowsPath: "/aaData", TotalPath: "/iTotalDisplayRecords", Ordering: "scan", DateFormat: "%m/%d/%y", TimeFormat: "%H:%M:%S", TwoDigitYearStart: 2000, MaxAgeSeconds: 2700, MaxFutureSkewSeconds: 60},
 	}
 }
 

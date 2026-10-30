@@ -26,22 +26,23 @@ type sourceState struct {
 }
 
 type Exporter struct {
-	cfg     config.Config
-	client  *powerchute.Client
-	version string
-	mu      sync.RWMutex
-	states  map[string]*sourceState
-	auth    [2]uint64 // failure, success
-	desc    map[string]*prometheus.Desc
-	Now     func() time.Time
-	logger  *slog.Logger
+	cfg         config.Config
+	client      *powerchute.Client
+	version     string
+	mu          sync.RWMutex
+	collectGate chan struct{}
+	states      map[string]*sourceState
+	auth        [2]uint64 // failure, success
+	desc        map[string]*prometheus.Desc
+	Now         func() time.Time
+	logger      *slog.Logger
 }
 
 func New(c config.Config, client *powerchute.Client, version string, logger *slog.Logger) *Exporter {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	e := &Exporter{cfg: c, client: client, version: version, states: map[string]*sourceState{}, desc: map[string]*prometheus.Desc{}, Now: time.Now, logger: logger}
+	e := &Exporter{cfg: c, client: client, version: version, collectGate: make(chan struct{}, 1), states: map[string]*sourceState{}, desc: map[string]*prometheus.Desc{}, Now: time.Now, logger: logger}
 	for name, enabled := range map[string]bool{"energy": c.Energy.Enabled, "datalog": c.DataLog.Enabled} {
 		if enabled {
 			e.states[name] = &sourceState{Errors: map[powerchute.Reason]uint64{}}
@@ -210,6 +211,19 @@ func (e *Exporter) Handler() http.Handler {
 
 // PollOnce atomically replaces only the source that completed successfully.
 func (e *Exporter) PollOnce(ctx context.Context, name string) error {
+	// A source gets its full cycle budget after admission. Starting its deadline
+	// while another source owns the shared client would turn queue time into an
+	// unrelated network failure, especially during a long Data Log scan.
+	select {
+	case e.collectGate <- struct{}{}:
+		defer func() { <-e.collectGate }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	parent := ctx
 	start := e.Now()
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(e.cfg.Exporter.CycleTimeoutSeconds)*time.Second)
 	defer cancel()
@@ -220,6 +234,9 @@ func (e *Exporter) PollOnce(ctx context.Context, name string) error {
 		energy, err = e.client.CollectEnergy(ctx)
 	} else {
 		data, err = e.client.CollectDataLog(ctx)
+	}
+	if parent.Err() != nil {
+		return parent.Err()
 	}
 	now := e.Now()
 	e.mu.Lock()
@@ -244,7 +261,7 @@ func (e *Exporter) PollOnce(ctx context.Context, name string) error {
 	}
 	e.mu.Unlock()
 	if err != nil {
-		e.logger.Warn("source collection failed", "source", name, "reason", powerchute.ErrorReason(err))
+		e.logger.Warn("source collection failed", "source", name, "reason", powerchute.ErrorReason(err), "detail", powerchute.ErrorDetail(err), "duration_seconds", now.Sub(start).Seconds())
 	} else if name == "energy" {
 		e.logger.Info("energy report collected", "from", energy.From, "to", energy.To)
 	}

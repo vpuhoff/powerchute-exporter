@@ -32,3 +32,13 @@ func ErrorReason(err error) Reason {
 	}
 	return Parse
 }
+
+// ErrorDetail exposes only messages produced by this package. Unknown errors
+// may contain credentials, URLs or tokens and must not be logged verbatim.
+func ErrorDetail(err error) string {
+	var e *Error
+	if errors.As(err, &e) {
+		return e.Message
+	}
+	return "collection failed"
+}
