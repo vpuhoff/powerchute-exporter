@@ -21,12 +21,13 @@ def github_failure(result, fallback):
     return RuntimeError(fallback)
 
 
-def gh_json(*args, optional=False):
-    result = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=120)
+def gh_json(*args, optional=False, timeout=120):
+    result = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         if optional and "HTTP 404" in (result.stderr or ""):
             return None
-        raise github_failure(result, "GitHub CLI request failed; no release was published by this step")
+        request = " ".join(args)
+        raise github_failure(result, f"GitHub CLI request failed for '{request}'; no release was published by this step")
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
@@ -155,6 +156,66 @@ def tag_commit(repo, tag):
     raise ValueError("release tag does not resolve to a commit")
 
 
+def numeric_id(value, label):
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"invalid {label}")
+    return value
+
+
+def find_release(repo, tag):
+    """Published releases are visible by tag. Drafts are not, because the git tag does not exist yet."""
+    if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
+        raise ValueError("invalid release tag")
+    published = gh_json("api", f"repos/{repo}/releases/tags/{tag}", optional=True)
+    if published is not None:
+        return published
+    pages = gh_json("api", f"repos/{repo}/releases?per_page=100", "--paginate", "--slurp") or []
+    if not isinstance(pages, list):
+        raise ValueError("release list was not returned")
+    matches = []
+    for page in pages:
+        rows = page if isinstance(page, list) else [page]
+        matches.extend(item for item in rows if isinstance(item, dict) and item.get("tag_name") == tag)
+    if len(matches) > 1:
+        raise ValueError("multiple releases share this tag")
+    return matches[0] if matches else None
+
+
+def create_draft(repo, tag, sha):
+    created = gh_json(
+        "api", "--method", "POST", f"repos/{repo}/releases",
+        "-f", f"tag_name={tag}", "-f", f"target_commitish={sha}", "-f", f"name={tag}",
+        "-F", "draft=true", "-F", "generate_release_notes=true",
+    )
+    if not isinstance(created, dict) or not created.get("draft") or created.get("tag_name") != tag:
+        raise ValueError("draft release was not created")
+    return created
+
+
+def upload_assets(repo, release, directory, names):
+    release_id = numeric_id(release.get("id"), "release id")
+    seen = {}
+    for asset in release.get("assets") or []:
+        name = asset.get("name")
+        if name in seen:
+            raise ValueError("draft contains a duplicate asset name")
+        seen[name] = asset
+    if not set(seen) <= set(names):
+        raise ValueError("draft contains unverified extra assets; refusing to publish")
+    for name in sorted(names):
+        asset = seen.get(name)
+        if asset is not None:
+            gh_json("api", "--method", "DELETE", f"repos/{repo}/releases/assets/{numeric_id(asset.get('id'), 'release asset')}")
+        gh_json(
+            "api", "--method", "POST", "-H", "Content-Type: application/octet-stream",
+            f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={quote(name)}",
+            "--input", str(directory / name),
+            timeout=300,
+        )
+    uploaded = gh_json("api", f"repos/{repo}/releases/{release_id}")
+    return release_id, uploaded
+
+
 def commit_sha(repo, commitish):
     """Resolve a release target to a commit. A branch name is not a SHA."""
     if re.fullmatch(r"[0-9a-f]{40}", commitish):
@@ -195,28 +256,24 @@ def publish_assets(env, directory):
     existing_commit = tag_commit(repo, tag)
     if existing_commit is not None and existing_commit != sha:
         raise ValueError("release tag already belongs to another commit; refusing to move it")
-    release = gh_json("api", f"repos/{repo}/releases/tags/{tag}", optional=True)
+    release = find_release(repo, tag)
     if release is not None and not release["draft"]:
         if existing_commit != sha or not expected <= {asset["name"] for asset in release["assets"]}:
             raise ValueError("published release does not match the expected commit/assets")
         print(f"Release {tag} is already published; existing assets are preserved")
         return
     if release is None:
-        gh_run("release", "create", tag, "--repo", repo, "--target", sha, "--title", tag, "--generate-notes", "--draft")
-        release = gh_json("api", f"repos/{repo}/releases/tags/{tag}")
+        release = create_draft(repo, tag, sha)
     if not release.get("draft") or commit_sha(repo, release["target_commitish"]) != sha:
         raise ValueError("existing draft does not belong to the built commit")
-    if not {asset["name"] for asset in release["assets"]} <= expected:
-        raise ValueError("draft contains unverified extra assets; refusing to publish")
-    gh_run("release", "upload", tag, "--repo", repo, "--clobber", *[str(directory / name) for name in sorted(expected)])
-    uploaded = gh_json("api", f"repos/{repo}/releases/tags/{tag}")
+    release_id, uploaded = upload_assets(repo, release, directory, expected)
     if {asset["name"] for asset in uploaded["assets"]} != expected or any(asset["state"] != "uploaded" or asset["size"] == 0 for asset in uploaded["assets"]):
         raise ValueError("draft asset upload is incomplete; draft remains unpublished")
     # GitHub's legacy policy selects Latest by semantic version and creation
     # date, so an older run finishing late need not replace a newer version.
     # Pin the tag to the built SHA. A draft often reports target_commitish as the branch name.
     gh_json(
-        "api", "--method", "PATCH", f"repos/{repo}/releases/{release['id']}",
+        "api", "--method", "PATCH", f"repos/{repo}/releases/{release_id}",
         "-f", f"target_commitish={sha}", "-F", "draft=false", "-f", "make_latest=legacy",
     )
     print(f"Published {tag} for {sha}")

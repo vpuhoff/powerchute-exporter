@@ -48,53 +48,67 @@ def write_packages(directory, version):
 class GitHubFake:
     def __init__(self, sha, names):
         self.sha = sha
-        self.names = names
+        self.names = set(names)
         self.tag_sha = None
         self.target = "master"
         self.resolved = sha
         self.created = False
-        self.uploaded = False
+        self.draft_ready = False
+        self.uploaded_names = []
         self.patched = False
         self.patch_args = ()
         self.create_args = ()
         self.published = False
+        self.tag_lookups = 0
 
-    def gh_json(self, *args, optional=False):
-        text = " ".join(args)
-        if "/git/ref/tags/" in text:
+    def body(self, draft, names):
+        return {
+            "id": 7,
+            "draft": draft,
+            "tag_name": "v" + VERSION,
+            "target_commitish": self.target,
+            "assets": [
+                {"id": index + 1, "name": name, "state": "uploaded", "size": 1}
+                for index, name in enumerate(sorted(names))
+            ],
+        }
+
+    def gh_json(self, *args, optional=False, timeout=120):
+        path = next(arg for arg in args if arg.startswith(("repos/", "https://")))
+        if "/git/ref/tags/" in path:
             if self.tag_sha is None:
                 return None
             return {"object": {"type": "commit", "sha": self.tag_sha}}
-        if "/commits/" in text:
+        if "/commits/" in path:
             return {"sha": self.resolved}
         if "PATCH" in args:
             self.patched = True
             self.patch_args = args
-            return {"id": 7, "draft": False}
-        if "/releases/tags/" in text:
+            return self.body(False, self.names)
+        if "/releases/tags/" in path:
+            # Drafts have no git tag, so this endpoint cannot see them.
+            self.tag_lookups += 1
             if self.published:
-                return {
-                    "id": 7,
-                    "draft": False,
-                    "target_commitish": self.target,
-                    "assets": [{"name": name, "state": "uploaded", "size": 1} for name in self.names],
-                }
-            if not self.created:
-                return None
-            assets = []
-            if self.uploaded:
-                assets = [{"name": name, "state": "uploaded", "size": 1} for name in self.names]
-            return {"id": 7, "draft": True, "target_commitish": self.target, "assets": assets}
-        raise AssertionError(text)
-
-    def gh_run(self, *args):
-        if args[:2] == ("release", "create"):
+                return self.body(False, self.names)
+            return None
+        if "releases?per_page=100" in path:
+            if not (self.draft_ready or self.published):
+                return [[]]
+            listed = self.names if self.published else []
+            return [[self.body(not self.published, listed)]]
+        if args[1:3] == ("--method", "POST") and path.endswith("/releases"):
             self.created = True
+            self.draft_ready = True
             self.create_args = args
-            return
-        if args[:2] == ("release", "upload"):
-            self.uploaded = True
-            return
+            return self.body(True, [])
+        if "DELETE" in args and "/releases/assets/" in path:
+            return None
+        if path.startswith("https://uploads.github.com/") and "/assets?name=" in path:
+            self.uploaded_names.append(path.split("name=", 1)[1])
+            return {"id": 1, "name": self.uploaded_names[-1], "state": "uploaded", "size": 1}
+        if path.endswith("/releases/7"):
+            present = self.names if set(self.uploaded_names) == self.names or self.published else set()
+            return self.body(not self.published, present)
         raise AssertionError(args)
 
 
@@ -220,23 +234,32 @@ class PublishTests(unittest.TestCase):
         self.fake = GitHubFake(SHA, {path.name for path in self.assets.iterdir()})
 
     def publish(self):
-        with mock.patch("release.gh_json", self.fake.gh_json), mock.patch("release.gh_run", self.fake.gh_run):
+        with mock.patch("release.gh_json", self.fake.gh_json), mock.patch("release.gh_run", side_effect=AssertionError("gh release")):
             release.publish_assets(self.env, self.assets)
 
     def test_branch_target_resolves_and_publish_pins_the_sha(self):
         self.publish()
         self.assertTrue(self.fake.created)
-        self.assertEqual(self.fake.create_args[self.fake.create_args.index("--target") + 1], SHA)
-        self.assertTrue(self.fake.uploaded)
+        self.assertIn(f"target_commitish={SHA}", self.fake.create_args)
+        self.assertIn("draft=true", self.fake.create_args)
+        self.assertEqual(set(self.fake.uploaded_names), self.fake.names)
+        self.assertGreater(self.fake.tag_lookups, 0)
         self.assertIn(f"target_commitish={SHA}", self.fake.patch_args)
         self.assertIn("draft=false", self.fake.patch_args)
+
+    def test_existing_draft_is_resumed_when_tag_lookup_misses_it(self):
+        self.fake.draft_ready = True
+        self.publish()
+        self.assertFalse(self.fake.created)
+        self.assertEqual(set(self.fake.uploaded_names), self.fake.names)
+        self.assertTrue(self.fake.patched)
 
     def test_moved_branch_does_not_publish(self):
         self.fake.resolved = "c" * 40
         with self.assertRaisesRegex(ValueError, "built commit"):
             self.publish()
         self.assertTrue(self.fake.created)
-        self.assertFalse(self.fake.uploaded)
+        self.assertEqual(self.fake.uploaded_names, [])
         self.assertFalse(self.fake.patched)
 
     def test_existing_tag_on_another_commit_is_not_moved(self):
