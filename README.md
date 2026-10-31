@@ -1,6 +1,6 @@
 # PowerChute Prometheus Exporter (Go)
 
-Экспортер Energy Reporting и Data Log для PowerChute Serial Shutdown. Работает через HTTP с cookie jar, без браузера. Проверен протокол Agent **1.4.0.301 / Back-UPS BX1600MI**. Зависимости закреплены в `go.mod` и `go.sum`; требуется **Go 1.25+**.
+Экспортер Energy Reporting и Data Log для PowerChute Serial Shutdown. Работает через HTTP с cookie jar, без браузера. Проверен протокол Agent **1.4.0.301 / Back-UPS BX1600MI**. Зависимости закреплены в `go.mod` и `go.sum`; требуется **Go 1.26+**.
 
 ## Запуск в Windows
 

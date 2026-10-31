@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   metadata:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -28,7 +28,7 @@ jobs:
       publish_release: ${{ steps.version.outputs.publish_release }}
       commit_sha: ${{ steps.version.outputs.commit_sha }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -44,11 +44,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2022]
+        os: [ubuntu-26.04, windows-2025]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-go@v7
@@ -72,7 +72,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: [amd64, arm64]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       VERSION: ${{ needs.metadata.outputs.version }}
@@ -80,7 +80,7 @@ jobs:
       CGO_ENABLED: '0'
       PACKAGE_MAINTAINER: ${{ github.repository_owner }} <${{ github.repository_owner }}@users.noreply.github.com>
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-go@v7
@@ -121,14 +121,14 @@ jobs:
 
   windows:
     needs: [metadata, test]
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 25
     env:
       VERSION: ${{ needs.metadata.outputs.version }}
       NUMERIC_VERSION: ${{ needs.metadata.outputs.numeric_version }}
       CGO_ENABLED: '0'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-go@v7
@@ -176,7 +176,7 @@ jobs:
     name: Publish GitHub Release
     needs: [metadata, linux, windows]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.metadata.outputs.publish_release == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: write
@@ -187,7 +187,7 @@ jobs:
       COMMIT_SHA: ${{ needs.metadata.outputs.commit_sha }}
       PUBLISH_RELEASE: ${{ needs.metadata.outputs.publish_release }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.metadata.outputs.commit_sha }}
           persist-credentials: false
