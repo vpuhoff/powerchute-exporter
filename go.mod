@@ -2,7 +2,7 @@ module powerchute-exporter
 
 go 1.25.0
 
-toolchain go1.25.8
+toolchain go1.27.3
 
 require (
 	github.com/PuerkitoBio/goquery v1.11.0
