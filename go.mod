@@ -9,7 +9,7 @@ require (
 	github.com/andybalholm/cascadia v1.3.5
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/common v0.73.1
-	go.yaml.in/yaml/v3 v3.0.5
+	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/sys v0.49.0
 )
 
